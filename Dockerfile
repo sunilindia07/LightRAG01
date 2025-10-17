@@ -36,7 +36,7 @@ RUN apt-get update \
 # Copy only dependency files first for better layer caching
 COPY pyproject.toml .
 COPY setup.py .
-COPY requirements.txt . # Assuming you can generate a requirements.txt from your uv.lock/pyproject.toml
+COPY requirements.txt .
 
 # --- Dependency Installation ---
 # Replace uv steps with standard pip, as pip is available by default.
