@@ -8,6 +8,10 @@ WORKDIR /app
 # Copy and build frontend assets
 COPY lightrag_webui/ ./lightrag_webui/
 
+# Use the ESBUILD_BINARY_PATH trick to skip the problematic postinstall validation
+# This is a common workaround for issues with esbuild in container environments.
+ENV ESBUILD_BINARY_PATH=/usr/bin/esbuild
+
 RUN cd lightrag_webui \
     && bun install --frozen-lockfile \
     && bun run build
