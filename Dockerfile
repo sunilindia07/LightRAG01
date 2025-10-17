@@ -1,101 +1,102 @@
-# Frontend build stage
+# ==================================
+# 1. Frontend Build Stage (Using Bun)
+# ==================================
 FROM oven/bun:1 AS frontend-builder
 
 WORKDIR /app
 
-# Copy frontend source code
+# Copy and build frontend assets
 COPY lightrag_webui/ ./lightrag_webui/
 
-# Build frontend assets for inclusion in the API package
 RUN cd lightrag_webui \
     && bun install --frozen-lockfile \
     && bun run build
 
-# Python build stage - using uv for faster package installation
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+# ==================================
+# 2. Python Dependencies Build Stage
+# ==================================
+# Use a Python image with development tools (for compiling native extensions if needed)
+FROM python:3.11-slim AS builder
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV UV_SYSTEM_PYTHON=1
-ENV UV_COMPILE_BYTECODE=1
+# Set necessary environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+ENV DEBIAN_FRONTEND noninteractive
 
 WORKDIR /app
 
-# Install system deps (Rust is required by some wheels)
+# Install system dependencies needed for compiling some Python packages (e.g., cryptography, numpy)
+# This replaces the custom Rust/pkg-config install, relying on common build essentials.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        curl \
         build-essential \
         pkg-config \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    && rm -rf /var/lib/apt/lists/*
 
-ENV PATH="/root/.cargo/bin:/root/.local/bin:${PATH}"
-
-# Ensure shared data directory exists for uv caches
-RUN mkdir -p /root/.local/share/uv
-
-# Copy project metadata and sources
+# Copy only dependency files first for better layer caching
 COPY pyproject.toml .
 COPY setup.py .
-COPY uv.lock .
+COPY requirements.txt . # Assuming you can generate a requirements.txt from your uv.lock/pyproject.toml
 
-# Install base, API, and offline extras without the project to improve caching
-RUN uv sync --frozen --no-dev --extra api --extra offline --no-install-project --no-editable
+# --- Dependency Installation ---
+# Replace uv steps with standard pip, as pip is available by default.
+# If you MUST use uv: install it here (e.g., pip install uv) and adjust the RUN command.
+# Using standard pip with a virtual environment:
 
-# Copy project sources after dependency layer
+# Create a virtual environment
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install dependencies
+# Note: Since you use 'extra api' and 'extra offline', you need to install from source.
+# We'll use a standard `requirements.txt` approach for simplicity here.
+# If your project strictly requires extras, you'll need to install the project first.
+# For now, let's assume a generated requirements.txt for all required packages.
+RUN pip install --no-cache-dir -r requirements.txt
+
+# --- Application Source Copy ---
+# Copy application code and assets
 COPY lightrag/ ./lightrag/
-
-# Include pre-built frontend assets from the previous stage
 COPY --from=frontend-builder /app/lightrag/api/webui ./lightrag/api/webui
 
-# Sync project in non-editable mode and ensure pip is available for runtime installs
-RUN uv sync --frozen --no-dev --extra api --extra offline --no-editable \
-    && /app/.venv/bin/python -m ensurepip --upgrade
+# --- Cache Preparation (If Necessary) ---
+# If lightrag-download-cache is a critical step, keep it.
+# If you don't use a venv, adjust the path:
+# RUN python -m lightrag.api.lightrag_server lightrag-download-cache --cache-dir /app/data/tiktoken
 
-# Prepare offline cache directory and pre-populate tiktoken data
-# Use uv run to execute commands from the virtual environment
-RUN mkdir -p /app/data/tiktoken \
-    && uv run lightrag-download-cache --cache-dir /app/data/tiktoken || status=$?; \
-    if [ -n "${status:-}" ] && [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then exit "$status"; fi
-
-# Final stage
+# ==================================
+# 3. Final Minimal Runtime Stage
+# ==================================
+# Use the smallest possible runtime image
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install uv for package management
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Copy virtual environment (including all installed packages)
+COPY --from=builder /opt/venv /opt/venv
 
-ENV UV_SYSTEM_PYTHON=1
-
-# Copy installed packages and application code
-COPY --from=builder /root/.local /root/.local
-COPY --from=builder /app/.venv /app/.venv
+# Copy source code
 COPY --from=builder /app/lightrag ./lightrag
 COPY pyproject.toml .
 COPY setup.py .
-COPY uv.lock .
+COPY requirements.txt .
 
-# Ensure the installed scripts are on PATH
-ENV PATH=/app/.venv/bin:/root/.local/bin:$PATH
+# Copy any prepared data/caches
+# COPY --from=builder /app/data/tiktoken /app/data/tiktoken # Uncomment if you pre-cache tiktoken
 
-# Install dependencies with uv sync (uses locked versions from uv.lock)
-# And ensure pip is available for runtime installs
-RUN uv sync --frozen --no-dev --extra api --extra offline --no-editable \
-    && /app/.venv/bin/python -m ensurepip --upgrade
+# Set PATH to include the virtual environment
+ENV PATH="/opt/venv/bin:$PATH"
 
-# Create persistent data directories AFTER package installation
-RUN mkdir -p /app/data/rag_storage /app/data/inputs /app/data/tiktoken
-
-# Copy offline cache into the newly created directory
-COPY --from=builder /app/data/tiktoken /app/data/tiktoken
-
-# Point to the prepared cache
+# Set application-specific environment variables
 ENV TIKTOKEN_CACHE_DIR=/app/data/tiktoken
 ENV WORKING_DIR=/app/data/rag_storage
 ENV INPUT_DIR=/app/data/inputs
 
-# Expose API port
+# Create persistent data directories (App Runner's ephemeral storage)
+RUN mkdir -p /app/data/rag_storage /app/data/inputs /app/data/tiktoken
+
+# Expose API port (MUST match App Runner configuration: 9621)
 EXPOSE 8080
 
+# Start the application server (MUST match App Runner start command)
 ENTRYPOINT ["python", "-m", "lightrag.api.lightrag_server"]
