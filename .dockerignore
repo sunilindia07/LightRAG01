@@ -20,10 +20,10 @@ build/
 *.tar.gz
 
 # Exclude siles and folders
-*.yml
-.dockerignore
-Dockerfile
-Makefile
+# *.yml
+# .dockerignore
+# Dockerfile
+# Makefile
 
 # Exclude other projects
 /tests
