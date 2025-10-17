@@ -12,6 +12,11 @@ COPY lightrag_webui/ ./lightrag_webui/
 # This is a common workaround for issues with esbuild in container environments.
 ENV ESBUILD_BINARY_PATH=/usr/bin/esbuild
 
+# TEMPORARY STEP TO FORCE REBUILD (Remove later)
+RUN echo "Forcing layer rebuild"
+
+RUN cd lightrag_webui \
+
 RUN cd lightrag_webui \
     && bun install --frozen-lockfile \
     && bun run build
