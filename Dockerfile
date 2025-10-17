@@ -79,7 +79,7 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /app/lightrag ./lightrag
 COPY pyproject.toml .
 COPY setup.py .
-# COPY requirements.txt .
+COPY requirements.txt .
 
 # Copy any prepared data/caches
 # COPY --from=builder /app/data/tiktoken /app/data/tiktoken # Uncomment if you pre-cache tiktoken
