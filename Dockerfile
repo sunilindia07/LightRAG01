@@ -96,6 +96,6 @@ ENV WORKING_DIR=/app/data/rag_storage
 ENV INPUT_DIR=/app/data/inputs
 
 # Expose API port
-EXPOSE 9621
+EXPOSE 8080
 
 ENTRYPOINT ["python", "-m", "lightrag.api.lightrag_server"]
