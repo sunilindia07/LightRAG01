@@ -2,7 +2,7 @@
 # ==================================
 # 1) Frontend Build (Bun)
 # ==================================
-FROM oven/bun:1.7.0 AS frontend-builder
+FROM oven/bun:1 AS frontend-builder
 WORKDIR /app/lightrag_webui
 
 # Copy only package manifest(s) and lockfile first for cache
