@@ -1,106 +1,85 @@
+
 # ==================================
-# 1. Frontend Build Stage (Using Bun)
+# 1) Frontend Build (Bun)
 # ==================================
 FROM oven/bun:1 AS frontend-builder
 
 WORKDIR /app
-
-# Copy and build frontend assets
 COPY lightrag_webui/ ./lightrag_webui/
 
+# Build the frontend
 RUN cd lightrag_webui \
-    # 🛠️ FIX #2: Use a temporary environment setting to disable postinstall scripts
-    # This prevents esbuild's problematic version check from running.
-    && npm config set ignore-scripts true \
-    && bun install --frozen-lockfile \
-    && npm config set ignore-scripts false \
+    && NODE_ENV=production bun install --frozen-lockfile \
     && bun run build
 
+# After this, we assume output is: /app/lightrag_webui/dist/
+
 # ==================================
-# 2. Python Dependencies Build Stage
+# 2) Python builder (venv + deps)
 # ==================================
-# Use a Python image with development tools (for compiling native extensions if needed)
 FROM python:3.11-slim AS builder
 
-# Set necessary environment variables
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-ENV DEBIAN_FRONTEND noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
 
-# Install system dependencies needed for compiling some Python packages (e.g., cryptography, numpy)
-# This replaces the custom Rust/pkg-config install, relying on common build essentials.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
-        pkg-config \
+# System deps that commonly help with building packages.
+# Add more only if your deps need them (e.g., libpq-dev, libffi-dev, libxml2-dev)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only dependency files first for better layer caching
-COPY pyproject.toml .
-COPY setup.py .
-COPY requirements.txt .
-
-# --- Dependency Installation ---
-# Replace uv steps with standard pip, as pip is available by default.
-# If you MUST use uv: install it here (e.g., pip install uv) and adjust the RUN command.
-# Using standard pip with a virtual environment:
-
-# Create a virtual environment
-RUN python3 -m venv /opt/venv
+# Leverage layer cache
+COPY requirements.txt ./
+RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r requirements.txt
 
-# Install dependencies
-# Note: Since you use 'extra api' and 'extra offline', you need to install from source.
-# We'll use a standard `requirements.txt` approach for simplicity here.
-# If your project strictly requires extras, you'll need to install the project first.
-# For now, let's assume a generated requirements.txt for all required packages.
-RUN pip install --no-cache-dir -r requirements.txt
-
-# --- Application Source Copy ---
-# Copy application code and assets
+# Copy backend source
 COPY lightrag/ ./lightrag/
-COPY --from=frontend-builder /app/lightrag/api/webui ./lightrag/api/webui
 
-# --- Cache Preparation (If Necessary) ---
-# If lightrag-download-cache is a critical step, keep it.
-# If you don't use a venv, adjust the path:
-# RUN python -m lightrag.api.lightrag_server lightrag-download-cache --cache-dir /app/data/tiktoken
+# Place frontend build into backend's expected static dir
+# Ensure destination exists
+RUN mkdir -p /app/lightrag/api/webui \
+    && true
+
+# bring the built static assets from the previous stage
+COPY --from=frontend-builder /app/lightrag_webui/dist/ /app/lightrag/api/webui/
+
+# (Optional) quick import check to fail fast at build time
+# RUN python -c "import lightrag, sys; print('Imported lightrag OK with', sys.version)"
 
 # ==================================
-# 3. Final Minimal Runtime Stage
+# 3) Runtime image
 # ==================================
-# Use the smallest possible runtime image
 FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH="/app"
 
 WORKDIR /app
 
-# Copy virtual environment (including all installed packages)
+# Copy the virtual env and the application
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /app/lightrag /app/lightrag
 
-# Copy source code
-COPY --from=builder /app/lightrag ./lightrag
-COPY pyproject.toml .
-COPY setup.py .
-COPY requirements.txt .
+# Data dirs (App Runner’s ephemeral storage in container)
+ENV TIKTOKEN_CACHE_DIR=/app/data/tiktoken \
+    WORKING_DIR=/app/data/rag_storage \
+    INPUT_DIR=/app/data/inputs
 
-# Copy any prepared data/caches
-# COPY --from=builder /app/data/tiktoken /app/data/tiktoken # Uncomment if you pre-cache tiktoken
-
-# Set PATH to include the virtual environment
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Set application-specific environment variables
-ENV TIKTOKEN_CACHE_DIR=/app/data/tiktoken
-ENV WORKING_DIR=/app/data/rag_storage
-ENV INPUT_DIR=/app/data/inputs
-
-# Create persistent data directories (App Runner's ephemeral storage)
 RUN mkdir -p /app/data/rag_storage /app/data/inputs /app/data/tiktoken
 
-# Expose API port (MUST match App Runner configuration: 9621)
+# App Runner default (or configure in service): 8080
 EXPOSE 8080
 
-# Start the application server (MUST match App Runner start command)
-ENTRYPOINT ["python", "-m", "lightrag.api.lightrag_server"]
+# Ensure the server listens on 0.0.0.0:8080
+# If your lightrag_server supports CLI args, use them; otherwise set env that it reads.
+ENTRYPOINT ["python", "-m", "lightrag.api.lightrag_server", "--host", "0.0.0.0", "--port", "8080"]
