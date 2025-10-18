@@ -2,15 +2,18 @@
 # ==================================
 # 1) Frontend Build (Bun)
 # ==================================
-FROM oven/bun:latest AS frontend-builder
-
+FROM oven/bun:1.7.0 AS frontend-builder
 WORKDIR /app/lightrag_webui
 
-# Copy and build frontend assets
-COPY lightrag_webui/ .
+# Copy only package manifest(s) and lockfile first for cache
+COPY lightrag_webui/package.json lightrag_webui/bun.lockb* ./
 
-RUN bun install \
-    && bun run build
+# Install (will use lockfile if present)
+RUN bun install
+
+# Copy rest of the frontend and build
+COPY lightrag_webui/ . 
+RUN bun run build
 
 # After this, we assume output is: /app/lightrag_webui/dist/
 
