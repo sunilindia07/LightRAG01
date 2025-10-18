@@ -2,18 +2,14 @@
 # ==================================
 # 1) Frontend Build (Bun)
 # ==================================
-FROM node:20-slim AS frontend-builder
+FROM oven/bun:latest AS frontend-builder
 
 WORKDIR /app/lightrag_webui
-
-# Install Bun
-RUN npm install -g bun
 
 # Copy and build frontend assets
 COPY lightrag_webui/ .
 
-# Now the npm fix should work, but use the NODE_ENV fix first as it's cleaner
-RUN NODE_ENV=production bun install --frozen-lockfile \
+RUN bun install \
     && bun run build
 
 # After this, we assume output is: /app/lightrag_webui/dist/
