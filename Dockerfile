@@ -8,17 +8,12 @@ WORKDIR /app
 # Copy and build frontend assets
 COPY lightrag_webui/ ./lightrag_webui/
 
-# Use the ESBUILD_BINARY_PATH trick to skip the problematic postinstall validation
-# This is a common workaround for issues with esbuild in container environments.
-ENV ESBUILD_BINARY_PATH=/usr/bin/esbuild
-
-# TEMPORARY STEP TO FORCE REBUILD (Remove later)
-RUN echo "Forcing layer rebuild"
-
 RUN cd lightrag_webui \
-
-RUN cd lightrag_webui \
+    # 🛠️ FIX #2: Use a temporary environment setting to disable postinstall scripts
+    # This prevents esbuild's problematic version check from running.
+    && npm config set ignore-scripts true \
     && bun install --frozen-lockfile \
+    && npm config set ignore-scripts false \
     && bun run build
 
 # ==================================
